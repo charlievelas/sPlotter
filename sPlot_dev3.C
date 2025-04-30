@@ -23,7 +23,7 @@ void sPlot_dev3() {
     gSystem->Load("libRooStats.so");
 
     // Load root file and tree
-    TFile f_1("distributions_order2.root");
+    TFile f_1("/shared/physics/physdata/nuclear/JLab/dzv508/sPlots_root/dev3/distributions_order2.root");
     TTree *tree_1 = (TTree*)f_1.Get(f_1.GetListOfKeys()->At(0)->GetName());
 
     // Define the names of the branches
@@ -175,62 +175,7 @@ void sPlot_dev3() {
 
     // Save the canvas
     c->Print("sPlot_dev3.root");
-
-    // Create canvas for cumulative probability distributions
-    TCanvas* cr = new TCanvas("sPlot ratio", "sPlot ratio", 1200, 600);
-    TH1F *h_cdf_s = (TH1F*)h_s->GetCumulative();
-    TH1F *h_cdf_w = new TH1F("h_cdf_w", "Cumulative Distribution of sWeighted pz", 100, -6, 6);
-    for (int i = 0; i < dataw_sig->numEntries(); ++i) {
-        const RooArgSet* row = dataw_sig->get(i);
-        double pz_val = row->getRealValue("pz");
-        double weight = dataw_sig->weight();
-        h_cdf_w->Fill(pz_val, weight);
-    }
-    h_cdf_w = (TH1F*)h_cdf_w->GetCumulative();
-
-    h_cdf_s->SetLineColor(kBlue);
-    h_cdf_s->SetLineWidth(2);
-    h_cdf_s->SetTitle("Cumulative Probability Distributions");
-    h_cdf_s->Draw();
-
-    h_cdf_w->SetLineColor(kRed);
-    h_cdf_w->SetLineWidth(2);
-    h_cdf_w->Draw("SAME");
-
-    TLegend *legend = new TLegend(0.7, 0.7, 0.9, 0.9);
-    legend->AddEntry(h_cdf_s, "True Distribution", "l");
-    legend->AddEntry(h_cdf_w, "sWeighted Distribution", "l");
-    legend->Draw();
-
-    // Perform Kolmogorov-Smirnov test
-    double ksTest = h_s->KolmogorovTest(h_cdf_w);
-    std::cout << "Kolmogorov-Smirnov Test p-value = " << ksTest << std::endl;
-
-    // Save the second canvas
-    cr->Print("sPlot_dev3_ratio.root");
-
-    // Save sWeights to a new ROOT file
-    std::string input_filename = f_1.GetName();
-    std::string output_filename = input_filename.substr(0, input_filename.find_last_of('.')) + "_sWeights.root";
-    TFile output_file(output_filename.c_str(), "RECREATE");
-    // Clone the original input tree
-    TTree* cloned_tree = tree_1->CloneTree(0);
-    // Create new branches for signal and background weights
-    float sWeights_s;
-    float sWeights_b;
-    cloned_tree->Branch("sWeights_s", &sWeights_s, "sWeights_s/F");
-    cloned_tree->Branch("sWeights_b", &sWeights_b, "sWeights_b/F");
-    // Fill the cloned tree with the new branches
-    for (size_t i = 0; i < s_weights.size(); ++i) {
-        tree_1->GetEntry(i);
-        sWeights_s = s_weights[i];
-        sWeights_b = b_weights[i];
-        cloned_tree->Fill();
-    }
-    // Save the cloned tree with the new branches to the output file
-    output_file.cd();
-    cloned_tree->Write();
-    output_file.Close();
+    
 }
 
 int main() {
