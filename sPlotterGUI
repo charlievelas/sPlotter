@@ -1,0 +1,877 @@
+#include <TGClient.h>
+#include <TCanvas.h>
+#include <TH1F.h>  // Include header for histograms
+#include <TRandom.h>
+#include <TGButton.h>
+#include <TGFrame.h>
+#include <TGComboBox.h>
+#include <TRootEmbeddedCanvas.h>
+#include <RQ_OBJECT.h>
+#include <TFile.h>
+#include <TTree.h>
+#include <iostream>
+#include <string>
+#include <TGNumberEntry.h>  // Include for number entry widgets
+#include <TGLabel.h>  // Include for label widget
+
+// Fit functions
+// Background - Quadratic background function
+double Background(double *x, double *par) {
+   return par[0] + par[1]*x[0] + par[2]*x[0]*x[0];
+}
+// Signal - Gauss Peak function
+double GaussPeak(double *x, double *par) {
+   return par[0]*TMath::Gaus(x[0], par[1], par[2]);
+}
+// Sum of background and peak function
+double fitFunction(double *x, double *par) {
+   return Background(x,par) + GaussPeak(x,&par[3]);
+   //&par[5] is where the guass parameters start in the length-8 'par' array containing the parameters for the background and the peak
+}
+
+class MyMainFrame {
+   RQ_OBJECT("MyMainFrame")
+   private:
+   TGMainFrame         *fMain;
+   TRootEmbeddedCanvas *fEcanvas;
+   TCanvas             *fCanvas;
+   // Discrimnating variable (i'd use "_Disc" but its not neat)
+   TGComboBox          *fComboBoxDisc;  // Drop-down list for branch names for discriminating variable
+   TGNumberEntry       *fBinsEntryDisc;  // Number of bins input
+   TGNumberEntry       *fMinXEntryDisc;  // Minimum X input
+   TGNumberEntry       *fMaxXEntryDisc;  // Maximum X input
+   TGNumberEntry       *fSigMinInput;   // Min input box
+   TGNumberEntry       *fSigMaxInput;   // Max input box
+   TGNumberEntry       *fFitMinInput;   // Min input box
+   TGNumberEntry       *fFitMaxInput;   // Max input box
+   // Control variable
+   TGComboBox          *fComboBoxCont;  // Drop-down list for branch names for control variable
+   TGNumberEntry       *fBinsEntryCont;  // Number of bins input
+   TGNumberEntry       *fMinXEntryCont;  // Minimum X input for drawing
+   TGNumberEntry       *fMaxXEntryCont;  // Maximum X input for drawing
+   TGNumberEntry       *fSubMinInput;  // Minimum X input for subtraction
+   TGNumberEntry       *fSubMaxInput;  // Maximum X input for subtraction
+   // Trees and files
+   TFile               *fFile1;       // ROOT file pointer
+   TTree               *fTree;       // TTree pointer
+   Int_t               fSelectedBranchDisc; // Store selected branch index
+   Int_t               fSelectedBranchCont; // Store selected branch index
+public:
+   MyMainFrame(const TGWindow *p, UInt_t w, UInt_t h, const char* filename1);
+   virtual ~MyMainFrame();
+   void DoDraw();
+   void DoFit();
+   void DoSub();
+   void OnSelectDisc(Int_t id);
+   void OnSelectCont(Int_t id);
+   //void OnSelectCon1(Int_t id);
+   //void OnSelectCon2(Int_t id);
+   //void OnSelectCon3(Int_t id);
+   //void OnSelectCon4(Int_t id);
+};
+
+MyMainFrame::MyMainFrame(const TGWindow *p, UInt_t w, UInt_t h, const char* filename1) 
+   : fSelectedBranchDisc(-1), fSelectedBranchCont(-1) {  // Initialize fSelectedBranchDisc to -1 (no selection initially)
+
+   // Open the ROOT files
+   fFile1 = TFile::Open(filename1);
+   if (!fFile1 || !fFile1->IsOpen()) {
+      Error("MyMainFrame", "Failed to open file 1: %s", filename1);
+      return;
+   }
+
+   // Get the first TTrees from the files
+   fTree = (TTree*)fFile1->Get(fFile1->GetListOfKeys()->At(0)->GetName()); // 'fTree' has remained 'fTree' for the sake of not having to rewrite large parts of later sections
+    
+   // Create a main frame
+   fMain = new TGMainFrame(p, w, h);
+
+   //// Canvas section
+   // Create a horizontal frame to hold the canvas and widgets side by side
+   TGHorizontalFrame *hframe = new TGHorizontalFrame(fMain, w, h);
+
+   //// Left widgets
+
+   // Create a vertical frame for dsicriminating variable widgets on the left
+   TGVerticalFrame *vframeL = new TGVerticalFrame(hframe, 200, 140);
+
+   //// Widget section
+   // Create and add the Exit button at the top (before all other widgets)
+   TGTextButton *exit = new TGTextButton(vframeL, "&Exit", "gApplication->Terminate(0)");
+   vframeL->AddFrame(exit, new TGLayoutHints(kLHintsCenterX, 5, 5, 3, 4));
+
+   // Add a 3D horizontal line 
+   TGHorizontal3DLine *hline1 = new TGHorizontal3DLine(vframeL);
+   hline1->Resize(200, 1);  // Resize the line to be longer, 300px wide and 1px tall
+   vframeL->AddFrame(hline1, new TGLayoutHints(kLHintsCenterX, 5, 5, 3, 4));
+
+   // Create a vertical frame for the labels and combo boxes (Branch name and Branch to cut on)
+   TGVerticalFrame *comboFrame = new TGVerticalFrame(vframeL, 200, 60);
+
+   // Discriminating variable section label
+   TGLabel *DiscLabel = new TGLabel(comboFrame, "Discriminating Variable");
+   comboFrame->AddFrame(DiscLabel, new TGLayoutHints(kLHintsCenterX, 5, 5, 3, 5));
+
+   // "Choose variable:" label and ComboBox
+   TGLabel *branchLabel = new TGLabel(comboFrame, "Choose variable:");
+   comboFrame->AddFrame(branchLabel, new TGLayoutHints(kLHintsLeft, 5, 5, 3, 4));
+
+   fComboBoxDisc = new TGComboBox(comboFrame, "Choose variable", 50);
+   fComboBoxDisc->Select(1); // Default selection (1)
+   fComboBoxDisc->Connect("Selected(Int_t)", "MyMainFrame", this, "OnSelectDisc(Int_t)");
+   fComboBoxDisc->Resize(200, 25);
+   comboFrame->AddFrame(fComboBoxDisc, new TGLayoutHints(kLHintsCenterY, 5, 5, 3, 4));
+
+   vframeL->AddFrame(comboFrame, new TGLayoutHints(kLHintsCenterX, 5, 5, 3, 4));
+
+   // Create a horizontal frame for the bin input box
+   TGHorizontalFrame *hBinsInputFrame = new TGHorizontalFrame(vframeL, 200, 120);
+
+   // Bins label and input box
+   TGHorizontalFrame *binsFrame = new TGHorizontalFrame(hBinsInputFrame, 60, 60);
+   TGLabel *binsLabel = new TGLabel(binsFrame, "Bins:");
+   binsFrame->AddFrame(binsLabel, new TGLayoutHints(kLHintsLeft, 5, 5, 3, 4));
+   fBinsEntryDisc = new TGNumberEntry(binsFrame, 100, 5, -1, TGNumberFormat::kNESInteger, TGNumberFormat::kNEAAnyNumber);
+   fBinsEntryDisc->SetWidth(60);
+   binsFrame->AddFrame(fBinsEntryDisc, new TGLayoutHints(kLHintsCenterY, 5, 5, 3, 4));
+   hBinsInputFrame->AddFrame(binsFrame, new TGLayoutHints(kLHintsCenterY, 5, 5, 3, 4));
+
+   vframeL->AddFrame(hBinsInputFrame, new TGLayoutHints(kLHintsCenterX, 5, 5, 3, 4));   
+
+   // Create a horizontal frame for the bin input box
+   TGHorizontalFrame *hInputFrame = new TGHorizontalFrame(vframeL, 200, 120);
+
+   // Min x label and input box
+   TGVerticalFrame *minXFrame = new TGVerticalFrame(hInputFrame, 60, 60);
+   TGLabel *minXLabel = new TGLabel(minXFrame, "Min x:");
+   minXFrame->AddFrame(minXLabel, new TGLayoutHints(kLHintsLeft, 5, 5, 3, 4));
+   fMinXEntryDisc = new TGNumberEntry(minXFrame, 0, 5, -1, TGNumberFormat::kNESReal, TGNumberFormat::kNEAAnyNumber);
+   fMinXEntryDisc->SetWidth(60);
+   minXFrame->AddFrame(fMinXEntryDisc, new TGLayoutHints(kLHintsCenterY, 5, 5, 3, 4));
+   hInputFrame->AddFrame(minXFrame, new TGLayoutHints(kLHintsCenterY, 5, 5, 3, 4));
+
+   // Max x label and input box
+   TGVerticalFrame *maxXFrame = new TGVerticalFrame(hInputFrame, 60, 60);
+   TGLabel *maxXLabel = new TGLabel(maxXFrame, "Max x:");
+   maxXFrame->AddFrame(maxXLabel, new TGLayoutHints(kLHintsLeft, 5, 5, 3, 4));
+   fMaxXEntryDisc = new TGNumberEntry(maxXFrame, 0, 5, -1, TGNumberFormat::kNESReal, TGNumberFormat::kNEAAnyNumber);
+   fMaxXEntryDisc->SetWidth(60);
+   maxXFrame->AddFrame(fMaxXEntryDisc, new TGLayoutHints(kLHintsCenterY, 5, 5, 3, 4));
+   hInputFrame->AddFrame(maxXFrame, new TGLayoutHints(kLHintsCenterY, 5, 5, 3, 4));
+
+   vframeL->AddFrame(hInputFrame, new TGLayoutHints(kLHintsCenterX, 5, 5, 3, 4));
+
+   // Create a horizontal frame for the fit range inputs
+   TGHorizontalFrame *hFitLabelFrame = new TGHorizontalFrame(vframeL, 200, 60);
+   TGLabel *FitLabel = new TGLabel(hFitLabelFrame, "Fit range:");
+   hFitLabelFrame->AddFrame(FitLabel, new TGLayoutHints(kLHintsLeft, 5, 5, 5, 0));
+   vframeL->AddFrame(hFitLabelFrame, new TGLayoutHints(kLHintsLeft, 5, 5, 5, 0));
+
+   TGHorizontalFrame *hFitInputFrame = new TGHorizontalFrame(vframeL, 200, 60);
+
+   // Fit range min x label and input box
+   TGVerticalFrame *FitMinXFrame = new TGVerticalFrame(hFitInputFrame, 120, 60);
+   TGLabel *FitMinXLabel = new TGLabel(FitMinXFrame, "Min:");
+   FitMinXFrame->AddFrame(FitMinXLabel, new TGLayoutHints(kLHintsLeft, 5, 5, 5, 5));
+   fFitMinInput = new TGNumberEntry(FitMinXFrame, 0, 5, -1, TGNumberFormat::kNESReal, TGNumberFormat::kNEAAnyNumber);
+   fFitMinInput->SetWidth(60);
+   FitMinXFrame->AddFrame(fFitMinInput, new TGLayoutHints(kLHintsCenterY, 5, 5, 5, 5));
+   hFitInputFrame->AddFrame(FitMinXFrame, new TGLayoutHints(kLHintsCenterY, 5, 5, 5, 5));
+
+   // Max x label and input box
+   TGVerticalFrame *FitMaxXFrame = new TGVerticalFrame(hFitInputFrame, 120, 60);
+   TGLabel *FitMaxXLabel = new TGLabel(FitMaxXFrame, "Max:");
+   FitMaxXFrame->AddFrame(FitMaxXLabel, new TGLayoutHints(kLHintsLeft, 5, 5, 5, 5));
+   fFitMaxInput = new TGNumberEntry(FitMaxXFrame, 0, 5, -1, TGNumberFormat::kNESReal, TGNumberFormat::kNEAAnyNumber);
+   fFitMaxInput->SetWidth(60);
+   FitMaxXFrame->AddFrame(fFitMaxInput, new TGLayoutHints(kLHintsCenterY, 5, 5, 5, 5));
+   hFitInputFrame->AddFrame(FitMaxXFrame, new TGLayoutHints(kLHintsCenterY, 5, 5, 5, 5));
+
+   vframeL->AddFrame(hFitInputFrame, new TGLayoutHints(kLHintsCenterX, 5, 5, 5, 5));
+
+   // Create a horizontal frame for the signal region inputs
+   TGHorizontalFrame *hSigLabelFrame = new TGHorizontalFrame(vframeL, 200, 60);
+   TGLabel *SigLabel = new TGLabel(hSigLabelFrame, "Signal Gaussian:");
+   hSigLabelFrame->AddFrame(SigLabel, new TGLayoutHints(kLHintsLeft, 5, 5, 5, 0));
+   vframeL->AddFrame(hSigLabelFrame, new TGLayoutHints(kLHintsLeft, 5, 5, 5, 0));
+
+   TGHorizontalFrame *hSigInputFrame = new TGHorizontalFrame(vframeL, 200, 60);
+
+   // Signal min x label and input box
+   TGVerticalFrame *SigMinXFrame = new TGVerticalFrame(hSigInputFrame, 120, 60);
+   TGLabel *SigMinXLabel = new TGLabel(SigMinXFrame, "Mean:");
+   SigMinXFrame->AddFrame(SigMinXLabel, new TGLayoutHints(kLHintsLeft, 5, 5, 5, 5));
+   fSigMinInput = new TGNumberEntry(SigMinXFrame, 0, 5, -1, TGNumberFormat::kNESReal, TGNumberFormat::kNEAAnyNumber);
+   fSigMinInput->SetWidth(60);
+   SigMinXFrame->AddFrame(fSigMinInput, new TGLayoutHints(kLHintsCenterY, 5, 5, 5, 5));
+   hSigInputFrame->AddFrame(SigMinXFrame, new TGLayoutHints(kLHintsCenterY, 5, 5, 5, 5));
+
+   // Max x label and input box
+   TGVerticalFrame *SigMaxXFrame = new TGVerticalFrame(hSigInputFrame, 120, 60);
+   TGLabel *SigMaxXLabel = new TGLabel(SigMaxXFrame, "Std:");
+   SigMaxXFrame->AddFrame(SigMaxXLabel, new TGLayoutHints(kLHintsLeft, 5, 5, 5, 5));
+   fSigMaxInput = new TGNumberEntry(SigMaxXFrame, 0, 5, -1, TGNumberFormat::kNESReal, TGNumberFormat::kNEAAnyNumber);
+   fSigMaxInput->SetWidth(60);
+   SigMaxXFrame->AddFrame(fSigMaxInput, new TGLayoutHints(kLHintsCenterY, 5, 5, 5, 5));
+   hSigInputFrame->AddFrame(SigMaxXFrame, new TGLayoutHints(kLHintsCenterY, 5, 5, 5, 5));
+
+   vframeL->AddFrame(hSigInputFrame, new TGLayoutHints(kLHintsCenterX, 5, 5, 5, 5));
+
+   hframe->AddFrame(vframeL, new TGLayoutHints(kLHintsLeft, 2, 2, 2, 2));
+
+   //// Canvas
+   // Create a vertical frame to hold the label and canvas
+   TGVerticalFrame *vframe1 = new TGVerticalFrame(hframe);
+
+   // Create canvas widget (on the left)
+   fEcanvas = new TRootEmbeddedCanvas("Ecanvas", vframe1, 1400, 700);
+   vframe1->AddFrame(fEcanvas, new TGLayoutHints(kLHintsExpandX | kLHintsExpandY, 5, 5, 5, 5)); // Canvas with all margins
+
+   // Split canvas into two pads
+   fCanvas = fEcanvas->GetCanvas();
+   fCanvas->Divide(2, 2);
+
+   // Add canvas1 to hframe
+   hframe->AddFrame(vframe1, new TGLayoutHints(kLHintsTop | kLHintsLeft | kLHintsTop | kLHintsLeft, 5, 5, 5, 5)); // Vertical frame in the main frame
+
+   //// Right widgets
+   // Create a vertical frame for control variable widgets on the right
+   TGVerticalFrame *vframeR = new TGVerticalFrame(hframe, 200, 140);
+
+   // Create a vertical frame for the labels and combo boxes (Branch name and Branch to cut on)
+   TGVerticalFrame *comboFrame2 = new TGVerticalFrame(vframeR, 200, 60);
+
+   // Discriminating variable section label
+   TGLabel *ContLabel = new TGLabel(comboFrame2, "Control Variable");
+   comboFrame2->AddFrame(ContLabel, new TGLayoutHints(kLHintsCenterX, 5, 5, 3, 5));
+
+   // "Choose variable:" label and ComboBox
+   TGLabel *branchLabel2 = new TGLabel(comboFrame2, "Choose variable:");
+   comboFrame2->AddFrame(branchLabel2, new TGLayoutHints(kLHintsLeft, 5, 5, 3, 4));
+
+   fComboBoxCont = new TGComboBox(comboFrame2, "Choose variable", 50);
+   fComboBoxCont->Select(1); // Default selection (1)
+   fComboBoxCont->Connect("Selected(Int_t)", "MyMainFrame", this, "OnSelectCont(Int_t)");
+   fComboBoxCont->Resize(200, 25);
+   comboFrame2->AddFrame(fComboBoxCont, new TGLayoutHints(kLHintsCenterY, 5, 5, 3, 4));
+
+   vframeR->AddFrame(comboFrame2, new TGLayoutHints(kLHintsCenterX, 5, 5, 3, 4));
+
+   // Create a horizontal frame for the three input boxes (Bins, Min x, Max x)
+   TGHorizontalFrame *hInputFrame2 = new TGHorizontalFrame(vframeR, 200, 120);
+
+   // Bins label and input box
+   TGVerticalFrame *binsFrame2 = new TGVerticalFrame(hInputFrame2, 60, 60);
+   TGLabel *binsLabel2 = new TGLabel(binsFrame2, "Bins:");
+   binsFrame2->AddFrame(binsLabel2, new TGLayoutHints(kLHintsLeft, 5, 5, 3, 4));
+   fBinsEntryCont = new TGNumberEntry(binsFrame2, 100, 5, -1, TGNumberFormat::kNESInteger, TGNumberFormat::kNEAAnyNumber);
+   fBinsEntryCont->SetWidth(60);
+   binsFrame2->AddFrame(fBinsEntryCont, new TGLayoutHints(kLHintsCenterY, 5, 5, 3, 4));
+   hInputFrame2->AddFrame(binsFrame2, new TGLayoutHints(kLHintsCenterY, 5, 5, 3, 4));
+
+   // Min x label and input box
+   TGVerticalFrame *minXFrame2 = new TGVerticalFrame(hInputFrame2, 60, 60);
+   TGLabel *minXLabel2 = new TGLabel(minXFrame2, "Min");
+   minXFrame2->AddFrame(minXLabel2, new TGLayoutHints(kLHintsLeft, 5, 5, 3, 4));
+   fMinXEntryCont = new TGNumberEntry(minXFrame2, 0, 5, -1, TGNumberFormat::kNESReal, TGNumberFormat::kNEAAnyNumber);
+   fMinXEntryCont->SetWidth(60);
+   minXFrame2->AddFrame(fMinXEntryCont, new TGLayoutHints(kLHintsCenterY, 5, 5, 3, 4));
+   hInputFrame2->AddFrame(minXFrame2, new TGLayoutHints(kLHintsCenterY, 5, 5, 3, 4));
+
+   // Max x label and input box
+   TGVerticalFrame *maxXFrame2 = new TGVerticalFrame(hInputFrame2, 60, 60);
+   TGLabel *maxXLabel2 = new TGLabel(maxXFrame2, "Max");
+   maxXFrame2->AddFrame(maxXLabel2, new TGLayoutHints(kLHintsLeft, 5, 5, 3, 4));
+   fMaxXEntryCont = new TGNumberEntry(maxXFrame2, 0, 5, -1, TGNumberFormat::kNESReal, TGNumberFormat::kNEAAnyNumber);
+   fMaxXEntryCont->SetWidth(60);
+   maxXFrame2->AddFrame(fMaxXEntryCont, new TGLayoutHints(kLHintsCenterY, 5, 5, 3, 4));
+   hInputFrame2->AddFrame(maxXFrame2, new TGLayoutHints(kLHintsCenterY, 5, 5, 3, 4));
+
+   vframeR->AddFrame(hInputFrame2, new TGLayoutHints(kLHintsCenterX, 5, 5, 3, 4));
+
+   // Create a horizontal frame for the subtraction region inputs
+   TGHorizontalFrame *hSubLabelFrame = new TGHorizontalFrame(vframeR, 200, 60);
+   TGLabel *SubLabel = new TGLabel(hSubLabelFrame, "sPlot range:");
+   hSubLabelFrame->AddFrame(SubLabel, new TGLayoutHints(kLHintsLeft, 5, 5, 5, 0));
+   vframeR->AddFrame(hSubLabelFrame, new TGLayoutHints(kLHintsLeft, 5, 5, 5, 0));
+
+   TGHorizontalFrame *hSubInputFrame = new TGHorizontalFrame(vframeR, 200, 60);
+
+   // Subtraction min x label and input box
+   TGHorizontalFrame *SubMinXFrame = new TGHorizontalFrame(hSubInputFrame, 120, 60);
+   TGLabel *SubMinXLabel = new TGLabel(SubMinXFrame, "Min:");
+   SubMinXFrame->AddFrame(SubMinXLabel, new TGLayoutHints(kLHintsLeft, 5, 5, 5, 5));
+   fSubMinInput = new TGNumberEntry(SubMinXFrame, 0, 5, -1, TGNumberFormat::kNESReal, TGNumberFormat::kNEAAnyNumber);
+   fSubMinInput->SetWidth(60);
+   SubMinXFrame->AddFrame(fSubMinInput, new TGLayoutHints(kLHintsCenterY, 5, 5, 5, 5));
+   hSubInputFrame->AddFrame(SubMinXFrame, new TGLayoutHints(kLHintsCenterY, 5, 5, 5, 5));
+
+   // Max x label and input box
+   TGHorizontalFrame *SubMaxXFrame = new TGHorizontalFrame(hSubInputFrame, 120, 60);
+   TGLabel *SubMaxXLabel = new TGLabel(SubMaxXFrame, "Max:");
+   SubMaxXFrame->AddFrame(SubMaxXLabel, new TGLayoutHints(kLHintsLeft, 5, 5, 5, 5));
+   fSubMaxInput = new TGNumberEntry(SubMaxXFrame, 0, 5, -1, TGNumberFormat::kNESReal, TGNumberFormat::kNEAAnyNumber);
+   fSubMaxInput->SetWidth(60);
+   SubMaxXFrame->AddFrame(fSubMaxInput, new TGLayoutHints(kLHintsCenterY, 5, 5, 5, 5));
+   hSubInputFrame->AddFrame(SubMaxXFrame, new TGLayoutHints(kLHintsCenterY, 5, 5, 5, 5));
+
+   vframeR->AddFrame(hSubInputFrame, new TGLayoutHints(kLHintsCenterX, 5, 5, 5, 5));
+
+   // Add a 3D horizontal line
+   TGHorizontal3DLine *hline4 = new TGHorizontal3DLine(vframeR);
+   hline4->Resize(200, 1);  // Resize the line to be longer, 300px wide and 1px tall
+   vframeR->AddFrame(hline4, new TGLayoutHints(kLHintsCenterX, 5, 5, 3, 4));
+   
+   // Final buttons
+   TGHorizontalFrame *hButsInputFrame = new TGHorizontalFrame(vframeR, 200, 60);
+
+   // Add the Draw button
+   TGTextButton *draw = new TGTextButton(hButsInputFrame, "&Draw");
+   draw->SetMargins(10, 10, 7, 7);
+   draw->Connect("Clicked()", "MyMainFrame", this, "DoDraw()");
+   hButsInputFrame->AddFrame(draw, new TGLayoutHints(kLHintsCenterY, 5, 5, 5, 5)); 
+
+   // Add the fit button
+   TGTextButton *fit = new TGTextButton(hButsInputFrame, "&Fit");
+   fit->SetMargins(10, 10, 7, 7);
+   fit->Connect("Clicked()", "MyMainFrame", this, "DoFit()");
+   hButsInputFrame->AddFrame(fit, new TGLayoutHints(kLHintsCenterY, 5, 5, 5, 5));
+
+   // Add the subtract button
+   TGTextButton *sub = new TGTextButton(hButsInputFrame, "&sPlot");
+   sub->SetMargins(10, 10, 7, 7);
+   sub->Connect("Clicked()", "MyMainFrame", this, "DoSub()");
+   hButsInputFrame->AddFrame(sub, new TGLayoutHints(kLHintsCenterY, 5, 5, 5, 5));
+
+   vframeR->AddFrame(hButsInputFrame, new TGLayoutHints(kLHintsCenterX, 5, 5, 5, 5));
+   
+   // Add to main frame
+   hframe->AddFrame(vframeR, new TGLayoutHints(kLHintsRight, 2, 2, 2, 2));
+   fMain->AddFrame(hframe, new TGLayoutHints(kLHintsExpandX | kLHintsExpandY));
+
+   // Set a name to the main frame
+   fMain->SetWindowName("sPlotter");
+
+   // Populate the ComboBoxes with branch names
+   if (fTree) {
+      TObjArray *branches = fTree->GetListOfBranches();
+      for (int i = 0; i < branches->GetEntries(); i++) {
+         TBranch *branch = (TBranch*)branches->At(i);
+         fComboBoxDisc->AddEntry(branch->GetName(), i+1); // Add branches to ComboBoxDisc (index + 1)
+         fComboBoxCont->AddEntry(branch->GetName(), i+1); // Add branches to ComboBoxCont (index + 1)
+      }
+   }
+
+   // Map all subwindows of main frame
+   fMain->MapSubwindows();
+
+   // Initialize the layout algorithm
+   fMain->Resize(fMain->GetDefaultSize());
+
+   // Map main frame
+   fMain->MapWindow();
+
+}
+
+
+void MyMainFrame::DoDraw() {
+
+   // Retrieve the selected branch from the first combo box (branch to draw)
+   if (fSelectedBranchDisc == -1) {
+      Error("DoDraw", "Error: No discriminating variable selected.");
+      return;
+   }
+   if (fSelectedBranchCont == -1) {
+      Error("DoDraw", "Error: No control variable selected.");
+      return;
+   }
+   
+   // Get the branch corresponding to the selected option
+   TBranch *branchDisc = (TBranch*)fTree->GetListOfBranches()->At(fSelectedBranchDisc - 1); // fSelectedBranchDisc is 1-based
+   if (!branchDisc) {
+      Error("DoDraw", "Invalid selection.");
+      return;
+   }
+   string branchNameDisc = branchDisc->GetName();   
+   TBranch *branchCont = (TBranch*)fTree->GetListOfBranches()->At(fSelectedBranchCont - 1); // fSelectedBranchCont is 1-based
+   if (!branchCont) {
+      Error("DoDraw", "Invalid selection.");
+      return;
+   }
+   string branchNameCont = branchCont->GetName();
+
+   // Retrieve the number of bins, min and max X values from the input boxes
+   Int_t fBinsDisc = fBinsEntryDisc->GetNumber();
+   Double_t fMinXDisc = fMinXEntryDisc->GetNumber();
+   Double_t fMaxXDisc = fMaxXEntryDisc->GetNumber();
+   
+   Int_t fBinsCont = fBinsEntryCont->GetNumber();
+   Double_t fMinXCont = fMinXEntryCont->GetNumber();
+   Double_t fMaxXCont = fMaxXEntryCont->GetNumber();
+
+   // Set all input boxes to zero
+   //fSigMinInput->SetNumber(0);
+   //fSigMaxInput->SetNumber(0);
+   //fFitMinInput->SetNumber(0);
+   //fFitMaxInput->SetNumber(0);
+
+   // Draw strings
+   TString drawCommandDisc = "";
+   TString drawTitleDisc = "Discriminating variable: ";
+
+   TString drawCommandCont = "";
+   TString drawTitleCont = "";
+
+   drawCommandDisc = TString::Format("%s>>hist1(%d,%f,%f)", branchNameDisc.c_str(), fBinsDisc, fMinXDisc, fMaxXDisc);
+   drawTitleDisc += branchNameDisc.c_str();
+
+   drawCommandCont = TString::Format("%s>>hist2(%d,%f,%f)", branchNameCont.c_str(), fBinsCont, fMinXCont, fMaxXCont);
+   drawTitleCont += branchNameCont.c_str();
+
+   TString drawCondition = "";
+
+   // Print all draw strings
+   std::cout << "////////  Drawn with following  ////////" << std::endl;
+   std::cout << "Discriminating variable: " << drawCommandDisc.Data() << std::endl;
+   std::cout << "Control variable: " << drawCommandCont.Data() << std::endl;
+
+   // Clear each pad before drawing new histograms
+   // Extended comment: The method below works because histograms being initliasied 
+   // and assigned for each branch on the tree rather than drawing the tree straight 
+   // to the canvas, this allows for interactivity of both graphs after they are plotted.
+   fCanvas->Clear();  // Clear the canvas to reset any changes
+   fCanvas->Divide(2, 2);  // Restore original pad layout (2 pads side-by-side)
+   
+   fCanvas->cd(1);
+   gPad->Clear();
+
+   // Defining and drawing first tree histogram
+   fTree->Draw(drawCommandDisc.Data());
+   TH1F *histDisc = (TH1F*)gDirectory->Get("hist1");
+   histDisc->SetTitle(drawTitleDisc.Data());
+   histDisc->SetStats(0);
+   fCanvas->cd(1);
+   histDisc->Draw("hist");
+   histDisc->SetMinimum(0);
+
+   // Clear pad 2
+   fCanvas->cd(2);
+   gPad->Clear();
+
+   // Pad 2
+   // Defining and drawing second tree histogram
+   fTree->Draw(drawCommandCont.Data(),drawCondition);
+   TH1F *histCont = (TH1F*)gDirectory->Get("hist2");
+   histCont->SetStats(0);
+   fCanvas->cd(2);
+   histCont->Draw();
+   histCont->SetTitle(drawTitleCont.Data());
+   histCont->SetMinimum(0);
+
+   // Clear pad 3
+   fCanvas->cd(3);
+   gPad->Clear();
+
+   // Pad 3
+   // ...
+
+   // Clear pad 4
+   fCanvas->cd(4);
+   gPad->Clear();
+
+   // Pad 4
+   // Defining and drawing second tree histogram
+   //fTree->Draw(drawCommandCont.Data(),drawCondition);
+   //TH1F *histCont = (TH1F*)gDirectory->Get("hist2");
+   //histCont->SetStats(0);
+   fCanvas->cd(4);
+   histCont->Draw();
+   histCont->SetTitle(drawTitleCont.Data());
+   histCont->SetMinimum(0);
+
+   // Update the canvas to display the histograms
+   fCanvas->Update();
+
+}
+
+void MyMainFrame::DoFit() {
+
+   // Retrieve the selected branch from the first combo box (branch to draw)
+   if (fSelectedBranchDisc == -1) {
+      Error("DoFit", "Error: No discriminating variable selected.");
+      return;
+   }
+   if (fSelectedBranchCont == -1) {
+      Error("DoFit", "Error: No control variable selected.");
+      return;
+   }
+   
+   // Get the branch corresponding to the selected option
+   TBranch *branchDisc = (TBranch*)fTree->GetListOfBranches()->At(fSelectedBranchDisc - 1); // fSelectedBranchDisc is 1-based
+   if (!branchDisc) {
+      Error("DoFit", "Invalid selection.");
+      return;
+   }
+   string branchNameDisc = branchDisc->GetName();   
+   TBranch *branchCont = (TBranch*)fTree->GetListOfBranches()->At(fSelectedBranchCont - 1); // fSelectedBranchCont is 1-based
+   if (!branchCont) {
+      Error("DoFit", "Invalid selection.");
+      return;
+   }
+   string branchNameCont = branchCont->GetName();
+
+   // Retrieve the number of bins, min and max X values from the input boxes
+   Int_t fBinsDisc = fBinsEntryDisc->GetNumber();
+   Double_t fMinXDisc = fMinXEntryDisc->GetNumber();
+   Double_t fMaxXDisc = fMaxXEntryDisc->GetNumber();
+   Double_t fFitMin = fFitMinInput->GetNumber();
+   Double_t fFitMax = fFitMaxInput->GetNumber();
+   Double_t fGaussMean = fSigMinInput->GetNumber();
+   Double_t fGaussStd = fSigMaxInput->GetNumber();
+
+   Int_t fBinsCont = fBinsEntryCont->GetNumber();
+   Double_t fMinXCont = fMinXEntryCont->GetNumber();
+   Double_t fMaxXCont = fMaxXEntryCont->GetNumber();
+   Double_t fSubMin = fSubMinInput->GetNumber();
+   Double_t fSubMax = fSubMaxInput->GetNumber();
+
+   //// Draw strings
+   TString drawCommandDisc = "";
+   TString drawTitleDisc = "Discriminating variable: ";
+
+   TString drawCommandCont = "";
+   TString drawTitleCont = "";
+
+   drawCommandDisc = TString::Format("%s>>hist1(%d,%f,%f)", branchNameDisc.c_str(), fBinsDisc, fMinXDisc, fMaxXDisc);
+   drawTitleDisc += branchNameDisc.c_str();
+
+   drawCommandCont = TString::Format("%s>>hist2(%d,%f,%f)", branchNameCont.c_str(), fBinsCont, fMinXCont, fMaxXCont);
+   drawTitleCont += branchNameCont.c_str();
+
+   // Output print
+   std::cout << "////////  Drawn with following  ////////" << std::endl;
+   std::cout << "Discriminating variable: " << drawCommandDisc.Data() << std::endl;
+   std::cout << "Control variable: " << drawCommandCont.Data() << std::endl;
+
+   //// Fitting
+
+   // Load RooFit gSystem
+   gSystem->Load("libRooFit");
+   gSystem->Load("libRooStats.so");
+
+   // Define the names of the branches
+   std::string x_name = branchNameDisc;
+   std::string y_name = branchNameCont;
+   
+   // Define the RooRealVar variables corresponding to the TTree branches
+   RooRealVar x(x_name.c_str(), x_name.c_str(), fFitMin, fFitMax); // Assuming the branch "mass" has values between 0 and 10
+   RooRealVar y(y_name.c_str(), y_name.c_str(), fSubMin, fSubMax); // Assuming the branch "pz" has values between -5 and 5
+
+   // Create a RooArgSet to hold the variables
+   RooArgSet vars(x, y);
+
+   // Create the RooDataSet from the TTree
+   RooDataSet* data = new RooDataSet("data", "dataset from TTree", fTree, vars);
+
+   // Create a RooDataSet containing only the x data
+   RooDataSet* data_x = (RooDataSet*)data->reduce(RooArgSet(x));
+
+   // Create signal and background yields - initially assume half signal and half background
+   int num_of_evnts = data_x->numEntries();
+   RooRealVar nsig("nsig", "number of signal events", num_of_evnts/2, 0, num_of_evnts);
+   RooRealVar nbkg("nbkg", "number of background events", num_of_evnts/2, 0, num_of_evnts);
+
+   // Define discriminating variable PDFs and combine
+   double meanLower = (fGaussMean == 0) ? -5 : fGaussMean * 0.5; // Default to -5 if fGaussMean is 0
+   double meanUpper = (fGaussMean == 0) ? 5 : fGaussMean * 1.5;  // Default to 5 if fGaussMean is 0
+   RooRealVar mean("mean", "mean of gaussian", fGaussMean, meanLower, meanUpper);
+   double sigmaLower = (fGaussStd == 0) ? 0.1 : fGaussStd * 0.5; // Default to 0.1 if fGaussStd is 0
+   double sigmaUpper = (fGaussStd == 0) ? 1.0 : fGaussStd * 1.5; // Default to 1.0 if fGaussStd is 0
+   RooRealVar sigma("sigma", "width of gaussian", fGaussStd, sigmaLower, sigmaUpper);
+   RooRealVar a0("a0", "a0", 0.1,-1,1);
+   RooRealVar a1("a1", "a1", 0.01,-1,1);
+   RooRealVar a2("a2", "a2", 0.01,-1,1);
+   RooGaussian gauss("gauss", "gaussian PDF", x, mean, sigma);
+   RooChebychev bkg("bkg", "background PDF", x, RooArgList(a0,a1,a2));
+   RooAddPdf model_x("model_x", "signal + background", RooArgList(gauss, bkg), RooArgList(nsig, nbkg));
+
+   // Fit model to data_x
+   RooFitResult *fitResult = model_x.fitTo(*data_x, RooFit::Save());
+
+   //// Drawing
+   // Clear each pad before drawing new histograms
+   fCanvas->Clear();
+   fCanvas->Divide(2, 2);
+   // Pad 1
+   fCanvas->cd(1);
+   gPad->Clear();
+   RooPlot* frame = x.frame();
+   data->plotOn(frame, RooFit::Binning(fBinsDisc));
+   model_x.plotOn(frame);
+   model_x.plotOn(frame, RooFit::Components(bkg), RooFit::LineStyle(kDashed), RooFit::LineColor(kBlue));
+   model_x.plotOn(frame, RooFit::Components(gauss), RooFit::LineStyle(kDashed), RooFit::LineColor(kRed));
+   frame->SetTitle(Form("Discriminating variable: %s", branchNameDisc.c_str()));
+   frame->Draw();
+   // Extract mean and standard deviation from the model
+   double meanValue = mean.getVal();  // Get the value of the mean
+   double sigmaValue = sigma.getVal();  // Get the value of the standard deviation
+   // Create a small box to display the mean and standard deviation
+   TString infoBoxText = Form("#splitline{Signal fit info}{#splitline{#mu: %.5g}{#sigma: %.5g}}", meanValue, sigmaValue);
+   TPaveText* infoBox = new TPaveText(0.7, 0.7, 0.9, 0.9, "brNDC");  // Position the box in normalized coordinates
+   infoBox->SetFillColor(0);  // Set background color to white
+   infoBox->SetBorderSize(1);  // Set border size
+   infoBox->SetTextSize(0.05);  // Set text size
+   infoBox->AddText(infoBoxText);  // Add the text to the box
+   infoBox->Draw("same");  // Draw the box on the same canvas
+
+   // Pad 2
+   fCanvas->cd(2);
+   gPad->Clear();
+   RooPlot* frame_y = y.frame();
+   data->plotOn(frame_y);
+   frame_y->SetTitle(branchNameCont.c_str());
+   frame_y->Draw();
+
+   // Pad 3
+   // ... sig, bg ans sig+bg sWeights
+
+   // Pad 4
+   fCanvas->cd(4);
+   gPad->Clear();
+   data->plotOn(frame_y);
+   frame_y->SetTitle(branchNameCont.c_str());
+   frame_y->Draw();
+
+   fCanvas->Update();
+
+
+}
+
+void MyMainFrame::DoSub() {
+
+   
+   // Retrieve the selected branch from the first combo box (branch to draw)
+   if (fSelectedBranchDisc == -1) {
+      Error("DoFit", "Error: No discriminating variable selected.");
+      return;
+   }
+   if (fSelectedBranchCont == -1) {
+      Error("DoFit", "Error: No control variable selected.");
+      return;
+   }
+   
+   // Get the branch corresponding to the selected option
+   TBranch *branchDisc = (TBranch*)fTree->GetListOfBranches()->At(fSelectedBranchDisc - 1); // fSelectedBranchDisc is 1-based
+   if (!branchDisc) {
+      Error("DoFit", "Invalid selection.");
+      return;
+   }
+   string branchNameDisc = branchDisc->GetName();   
+   TBranch *branchCont = (TBranch*)fTree->GetListOfBranches()->At(fSelectedBranchCont - 1); // fSelectedBranchCont is 1-based
+   if (!branchCont) {
+      Error("DoFit", "Invalid selection.");
+      return;
+   }
+   string branchNameCont = branchCont->GetName();
+
+   // Retrieve the number of bins, min and max X values from the input boxes
+   Int_t fBinsDisc = fBinsEntryDisc->GetNumber();
+   Double_t fMinXDisc = fMinXEntryDisc->GetNumber();
+   Double_t fMaxXDisc = fMaxXEntryDisc->GetNumber();
+   Double_t fFitMin = fFitMinInput->GetNumber();
+   Double_t fFitMax = fFitMaxInput->GetNumber();
+   Double_t fGaussMean = fSigMinInput->GetNumber();
+   Double_t fGaussStd = fSigMaxInput->GetNumber();
+
+   Int_t fBinsCont = fBinsEntryCont->GetNumber();
+   Double_t fMinXCont = fMinXEntryCont->GetNumber();
+   Double_t fMaxXCont = fMaxXEntryCont->GetNumber();
+   Double_t fSubMin = fSubMinInput->GetNumber();
+   Double_t fSubMax = fSubMaxInput->GetNumber();
+
+   //// Draw strings
+   TString drawCommandDisc = "";
+   TString drawTitleDisc = "Discriminating variable: ";
+
+   TString drawCommandCont = "";
+   TString drawTitleCont = "";
+
+   drawCommandDisc = TString::Format("%s>>hist1(%d,%f,%f)", branchNameDisc.c_str(), fBinsDisc, fMinXDisc, fMaxXDisc);
+   drawTitleDisc += branchNameDisc.c_str();
+
+   drawCommandCont = TString::Format("%s>>hist2(%d,%f,%f)", branchNameCont.c_str(), fBinsCont, fMinXCont, fMaxXCont);
+   drawTitleCont += branchNameCont.c_str();
+
+   // Output print
+   std::cout << "////////  Drawn with following  ////////" << std::endl;
+   std::cout << "Discriminating variable: " << drawCommandDisc.Data() << std::endl;
+   std::cout << "Control variable: " << drawCommandCont.Data() << std::endl;
+   //// Fitting
+
+   // Load RooFit gSystem
+   gSystem->Load("libRooFit");
+   gSystem->Load("libRooStats.so");
+
+   // Define the names of the branches
+   std::string x_name = branchNameDisc;
+   std::string y_name = branchNameCont;
+
+   // Define the RooRealVar variables corresponding to the TTree branches
+   RooRealVar x(x_name.c_str(), x_name.c_str(), fFitMin, fFitMax); // Assuming the branch "mass" has values between 0 and 10
+   RooRealVar y(y_name.c_str(), y_name.c_str(), fSubMin, fSubMax); // Assuming the branch "pz" has values between -5 and 5
+
+   // Create a RooArgSet to hold the variables
+   RooArgSet vars(x, y);
+
+   // Create the RooDataSet from the TTree
+   RooDataSet* data = new RooDataSet("data", "dataset from TTree", fTree, vars);
+
+   // Create a RooDataSet containing only the x data
+   RooDataSet* data_x = (RooDataSet*)data->reduce(RooArgSet(x));
+
+   // Create signal and background yields - initially assume half signal and half background
+   int num_of_evnts = data_x->numEntries();
+   RooRealVar nsig("nsig", "number of signal events", num_of_evnts/2, 0, num_of_evnts);
+   RooRealVar nbkg("nbkg", "number of background events", num_of_evnts/2, 0, num_of_evnts);
+
+   // Define discriminating variable PDFs and combine
+   double meanLower = (fGaussMean == 0) ? -5 : fGaussMean * 0.5; // Default to -5 if fGaussMean is 0
+   double meanUpper = (fGaussMean == 0) ? 5 : fGaussMean * 1.5;  // Default to 5 if fGaussMean is 0
+   RooRealVar mean("mean", "mean of gaussian", fGaussMean, meanLower, meanUpper);
+   double sigmaLower = (fGaussStd == 0) ? 0.1 : fGaussStd * 0.5; // Default to 0.1 if fGaussStd is 0
+   double sigmaUpper = (fGaussStd == 0) ? 1.0 : fGaussStd * 1.5; // Default to 1.0 if fGaussStd is 0
+   RooRealVar sigma("sigma", "width of gaussian", fGaussStd, sigmaLower, sigmaUpper);
+   RooRealVar a0("a0", "a0", 0.1,-1,1);
+   RooRealVar a1("a1", "a1", 0.01,-1,1);
+   RooRealVar a2("a2", "a2", 0.01,-1,1);
+   RooGaussian gauss("gauss", "gaussian PDF", x, mean, sigma);
+   RooChebychev bkg("bkg", "background PDF", x, RooArgList(a0,a1,a2));
+   RooAddPdf model_x("model_x", "signal + background", RooArgList(gauss, bkg), RooArgList(nsig, nbkg));
+
+   // Fit model to data_x
+   RooFitResult *fitResult = model_x.fitTo(*data_x, RooFit::Save());
+
+   //// Drawing Pad 1
+   // Clear each pad before drawing new histograms
+   fCanvas->Clear();
+   fCanvas->Divide(2, 2);
+   // Pad 1
+   fCanvas->cd(1);
+   gPad->Clear();
+   RooPlot* frame1 = x.frame();
+   data->plotOn(frame1, RooFit::Binning(fBinsDisc));
+   model_x.plotOn(frame1);
+   model_x.plotOn(frame1, RooFit::Components(bkg), RooFit::LineStyle(kDashed), RooFit::LineColor(kBlue));
+   model_x.plotOn(frame1, RooFit::Components(gauss), RooFit::LineStyle(kDashed), RooFit::LineColor(kRed));
+   frame1->SetTitle(Form("Discriminating variable: %s", branchNameDisc.c_str()));
+   frame1->Draw();
+   // Extract mean and standard deviation from the model
+   double meanValue = mean.getVal();  // Get the value of the mean
+   double sigmaValue = sigma.getVal();  // Get the value of the standard deviation
+   // Create a small box to display the mean and standard deviation
+   TString infoBoxText = Form("#splitline{Signal fit info}{#splitline{#mu: %.5g}{#sigma: %.5g}}", meanValue, sigmaValue);
+   TPaveText* infoBox = new TPaveText(0.7, 0.7, 0.9, 0.9, "brNDC");  // Position the box in normalized coordinates
+   infoBox->SetFillColor(0);  // Set background color to white
+   infoBox->SetBorderSize(1);  // Set border size
+   infoBox->SetTextSize(0.05);  // Set text size
+   infoBox->AddText(infoBoxText);  // Add the text to the box
+   infoBox->Draw("same");  // Draw the box on the same canvas
+
+   //// sPlot
+   // Create sPlot object for data_x
+   RooStats::SPlot* sData = new RooStats::SPlot("sData", "An SPlot", *data, &model_x, RooArgList(nsig, nbkg));   
+   // Create sWeighted dataset for y
+   RooDataSet* dataw_sig = new RooDataSet("dataw_sig", "sWeighted data_y", data, *data->get(), 0, "nsig_sw");
+   RooDataSet* dataw_bg = new RooDataSet("dataw_bg", "sWeighted data_y", data, *data->get(), 0, "nbkg_sw");
+
+   //// Drawing remaining pads
+   // Pad 2
+   fCanvas->cd(2);
+   gPad->Clear();
+   RooPlot* frame_sig_y = y.frame();
+   dataw_sig->plotOn(frame_sig_y, RooFit::Binning(fBinsCont), RooFit::DataError(RooAbsData::SumW2), RooFit::LineColor(kRed));
+   frame_sig_y->SetTitle(Form("Signal sWeighted: %s", branchNameCont.c_str()));
+   frame_sig_y->Draw();
+
+   // Pad 3
+   fCanvas->cd(3);
+   gPad->Clear();
+   TGraph* graph_sWeights_sig = new TGraph();
+   TGraph* graph_sWeights_bkg = new TGraph();
+   TGraph* graph_sWeights_sum = new TGraph();
+   double minWeight = 0;
+   double maxWeight = 0;
+   std::vector<double> s_weights;
+   std::vector<double> b_weights;
+   for (int i = 0; i < data_x->numEntries(); ++i) {
+       const RooArgSet* row = data_x->get(i);
+       double x_val = row->getRealValue(x_name.c_str());
+       double sWeight_sig = sData->GetSWeight(i, "nsig");
+       double sWeight_bkg = sData->GetSWeight(i, "nbkg");
+       double sWeight_sum = sWeight_sig + sWeight_bkg;
+       graph_sWeights_sig->SetPoint(i, x_val, sWeight_sig);
+       graph_sWeights_bkg->SetPoint(i, x_val, sWeight_bkg);
+       graph_sWeights_sum->SetPoint(i, x_val, sWeight_sum);
+       if (sWeight_sig < minWeight) minWeight = sWeight_sig;
+       if (sWeight_bkg < minWeight) minWeight = sWeight_bkg;
+       if (sWeight_sum < minWeight) minWeight = sWeight_sum;
+       if (sWeight_sig > maxWeight) maxWeight = sWeight_sig;
+       if (sWeight_bkg > maxWeight) maxWeight = sWeight_bkg;
+       if (sWeight_sum > maxWeight) maxWeight = sWeight_sum;
+       s_weights.push_back(sWeight_sig);
+       b_weights.push_back(sWeight_bkg);
+   }
+   graph_sWeights_sig->SetTitle("Signal and Background sWeights vs x; x; sWeight");
+   graph_sWeights_sig->SetMarkerStyle(1);
+   graph_sWeights_sig->SetMarkerColor(kRed);
+   graph_sWeights_sig->GetXaxis()->SetLimits(fFitMin, fFitMax); // Ensure x-axis range matches mass x-axis range
+   graph_sWeights_sig->GetXaxis()->SetTitle(x_name.c_str());
+   graph_sWeights_sig->GetYaxis()->SetTitle("sWeight");
+   graph_sWeights_sig->Draw("AP");
+   graph_sWeights_bkg->SetMarkerStyle(1);
+   graph_sWeights_bkg->SetMarkerColor(kBlue);
+   graph_sWeights_bkg->Draw("P SAME");
+   graph_sWeights_sum->SetMarkerStyle(1);
+   graph_sWeights_sum->SetMarkerColor(kBlack);
+   graph_sWeights_sum->Draw("P SAME");
+
+   // Set y-axis range to ensure all weights are plotted
+   graph_sWeights_sig->GetYaxis()->SetRangeUser(minWeight - 0.1 * fabs(minWeight), maxWeight + 0.1 * fabs(maxWeight));
+
+
+   // Pad 4
+   fCanvas->cd(4);
+   gPad->Clear();
+   RooPlot* frame_bg_y = y.frame();
+   data->plotOn(frame_bg_y, RooFit::Binning(fBinsCont));
+   dataw_bg->plotOn(frame_bg_y, RooFit::Binning(fBinsCont), RooFit::DataError(RooAbsData::SumW2), RooFit::LineColor(kBlue), RooFit::MarkerColor(kBlue));
+   frame_bg_y->SetTitle(Form("Background sWeighted: %s", branchNameCont.c_str()));
+   frame_bg_y->Draw();
+   fCanvas->Update();
+
+}
+
+void MyMainFrame::OnSelectDisc(Int_t id) {
+   fSelectedBranchDisc = id;
+
+}
+
+void MyMainFrame::OnSelectCont(Int_t id) {
+   fSelectedBranchCont = id;
+}
+
+
+MyMainFrame::~MyMainFrame() {
+   // Clean up used widgets: frames, buttons, layout hints
+   fMain->Cleanup();
+   delete fMain;
+   if (fFile1) {
+      fFile1->Close();
+      delete fFile1;
+   }
+}
+
+void sPlotterGUI(const char* filename1) {
+   // Popup the GUI with the given ROOT file...
+   new MyMainFrame(gClient->GetRoot(), 1400, 800, filename1);
+}
